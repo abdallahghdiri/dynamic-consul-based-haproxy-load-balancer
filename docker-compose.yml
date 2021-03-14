@@ -1,0 +1,62 @@
+version: '3.7'
+
+services:
+  load_balancer:
+    # optional
+    container_name: load_balancer
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    # should haproxy crash, always restart it
+    restart: always
+    # treat port 80 of the host as port 80 of the container
+    ports:
+      - 80:80
+      - 1936:1936
+    environment:
+      CONSUL_ADDR: consul-server-bootstrap:8500
+    init: true # Important as to cleanup defunct haproxy processes that are replaced once a change happens in consul registered services
+    depends_on:
+      - consul-server-bootstrap
+    links: 
+      - consul-server-bootstrap
+      
+  # SERVICE DISCOVERY
+  consul-server-bootstrap:
+    image: consul:1.9.4
+    container_name: consul-server-bootstrap
+    ports:
+      - "8500:8500" # HTTP
+    command: "agent -server -bootstrap-expect 1 -ui -client 0.0.0.0"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8500"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # BACKEND SERVICES
+  web_server_0:
+    image: nginx:1.18.0-alpine
+    container_name: web_server_0
+    ports:
+      - "8000:80" # HTTP
+    volumes:
+      - ./src:/usr/share/nginx/html
+      
+  web_server_1:
+    image: nginx:1.18.0-alpine
+    container_name: web_server_1
+    volumes:
+      - ./src:/usr/share/nginx/html
+
+  # SERVICE REGISTRY
+  register_backend_services:
+    image: curlimages/curl:7.75.0
+    container_name: register_backend_services
+    volumes:
+      - ./scripts:/scripts
+    command: "/bin/sh /scripts/register-services.sh"
+    depends_on:
+      - consul-server-bootstrap
+      - web_server_0
+      - web_server_1
